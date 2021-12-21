@@ -28,7 +28,7 @@ def seed():
 
     metadata['dev_tax'] = 0.5  # Developer tax
     metadata['mnt_tax'] = 0.5  # Minting tax
-    metadata['liq_tax'] = 0.5  # Liquidity tax
+    metadata['liq_tax'] = 1  # Liquidity tax
 
     metadata['operators'] = [
         'ae7d14d6d9b8443f881ba6244727b69b681010e782d4fe482dbfb0b6aca02d5d',
@@ -84,7 +84,6 @@ def tau_to_pusd(tau_amount: float):
     assert tau_amount > 0, 'Cannot send negative balances!'
 
     dev_amount = tau_amount / 100 * metadata['dev_tax']
-    liq_amount = tau_amount / 100 * metadata['liq_tax']
     mnt_amount = tau_amount / 100 * metadata['mnt_tax']
 
     tau.transfer_from(amount=tau_amount, to=ctx.this, main_account=ctx.caller)
@@ -92,7 +91,7 @@ def tau_to_pusd(tau_amount: float):
 
     prices = ForeignHash(foreign_contract=metadata['dex'], foreign_name='prices')
 
-    pusd_amount = (tau_amount / prices[metadata['lusd']]) - dev_amount - liq_amount - mnt_amount
+    pusd_amount = (tau_amount / prices[metadata['lusd']]) - dev_amount - mnt_amount
 
     balances[ctx.caller] += pusd_amount
     total_supply.set(total_supply.get() + pusd_amount)
@@ -113,21 +112,20 @@ def pusd_to_tau(pusd_amount: float):
     
     total_supply.set(total_supply.get() - pusd_amount)
 
-# TODO: This will not be correct since in here is also TAU for liquidity
+    if liq_amount >= 10:
+        add_liquidity(liq_amount)
+
+def add_liquidity(pusd_amount: float):
+    approve(amount=pusd_amount, to=metadata['dex'])
+    tau_amount = I.import_module(metadata['dex']).sell(contract=ctx.this, token_amount=pusd_amount / 2)
+
+    tau.approve(amount=tau_amount, to=metadata['dex'])
+    I.import_module(metadata['dex']).add_liquidity(contract=ctx.this, currency_amount=pusd_amount)
+
 @export
 def get_current_backing_ratio():  # > 1 = Good
     prices = ForeignHash(foreign_contract=metadata['dex'], foreign_name='prices')
     return ((tau.balance_of(ctx.this) * (1 / prices[metadata['lusd']])) / circulating_supply())
-
-# PUSD & TAU are both in balances[ctx.this] but amount is unclear since the TAU collateral is also in there!
-# Has to be triggered manually now but we don't know the exact amount
-@export
-def add_liquidity(tau_amount: float):
-    approve(amount=balances[metadata['liq_addr']], to=metadata['dex'])
-    tau_amount = I.import_module(metadata['dex']).sell(contract=ctx.this, token_amount=balances[ctx.this] / 2)
-
-    tau.approve(amount=tau_amount, to=metadata['dex'])
-    I.import_module(metadata['dex']).add_liquidity(contract=ctx.this, currency_amount=tau_amount)
 
 @export
 def migrate_tau(contract: str, amount: float):
